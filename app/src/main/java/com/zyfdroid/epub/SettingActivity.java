@@ -13,10 +13,23 @@ import android.widget.CheckBox;
 import android.widget.CompoundButton;
 import android.widget.Toast;
 
+import com.zyfdroid.epub.utils.CinematicProgressDialog;
+import com.zyfdroid.epub.utils.DBUtils;
 import com.zyfdroid.epub.utils.SpUtils;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FilenameFilter;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.PrintStream;
+import java.nio.Buffer;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Scanner;
 
 public class SettingActivity extends AppCompatActivity {
 
@@ -55,13 +68,15 @@ public class SettingActivity extends AppCompatActivity {
     }
 
     public void clearCache(View view) {
-        new AlertDialog.Builder(this).setMessage(R.string.setting_clean_cache_message).setPositiveButton(android.R.string.ok, new DialogInterface.OnClickListener() {
+        new AlertDialog.Builder(this).setMessage(R.string.setting_clean_cache_message).setPositiveButton(android.R.string.yes, new DialogInterface.OnClickListener() {
             @Override
             public void onClick(DialogInterface dialogInterface, int i) {
-
-                gotoAppDetailIntent(SettingActivity.this);
+                File f = new File(getCacheDir(),"book");
+                delFileAndDir(f);
+                f.mkdirs();
+                Toast.makeText(SettingActivity.this, "清除成功。", Toast.LENGTH_SHORT).show();
             }
-        }).create().show();
+        }).setNegativeButton(android.R.string.no,null).create().show();
     }
 
     public static void gotoAppDetailIntent(Activity activity) {
@@ -97,7 +112,98 @@ public class SettingActivity extends AppCompatActivity {
                     SpUtils.getInstance(SettingActivity.this).setCustomFont("");
                 }
                 SpUtils.getInstance(SettingActivity.this).setCustomFont(options[which]);
+                //Clear font cache
+                delFileAndDir(new File(getCacheDir(),"bvc"));
             }
         }).setCancelable(true).create().show();
+    }
+
+    private void delFileAndDir(File file){
+        if(file.exists()&&file.isDirectory()){
+            File[] files = file.listFiles();
+            for(File f:files){
+                if(f.isFile()){
+                    f.delete();
+                }else {
+                    delFileAndDir(f);
+                }
+                f.delete();
+            }
+        }
+    }
+
+    public void exportComplete(View view) {
+        importComplete(view);
+        List<DBUtils.BookEntry> books = DBUtils.queryBooks("type=2");
+        try {
+            File f = new File(Environment.getExternalStorageDirectory(),"Books"+File.separator+getString(R.string.filename_complete_reading));
+            if(f.exists()){
+                f.delete();
+            }
+            PrintStream ps = new PrintStream(f);
+            for (DBUtils.BookEntry be : books) {
+                String filename = be.getPath();
+                String uniqueKey = "";
+                if(filename.contains("/")){
+                    uniqueKey  = filename.substring(filename.lastIndexOf('/')+1);
+                }
+                else if(filename.contains("\\")){
+                    uniqueKey  = filename.substring(filename.lastIndexOf('\\')+1);
+                }
+                else{
+                    uniqueKey = filename;
+                }
+                ps.println(uniqueKey);
+            }
+            ps.close();
+            Toast.makeText(this, R.string.success, Toast.LENGTH_SHORT).show();
+        } catch (FileNotFoundException e) {
+            e.printStackTrace();
+            Toast.makeText(this, "Error: "+e.getLocalizedMessage(), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+
+    public void importComplete(View view) {
+
+        try {
+            File f = new File(Environment.getExternalStorageDirectory(),"Books"+File.separator+getString(R.string.filename_complete_reading));
+            if(!f.exists()){
+                Toast.makeText(this, "File not found", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            InputStream is = new FileInputStream(f);
+            BufferedReader br = new BufferedReader(new InputStreamReader(is));
+            HashSet<String> readedBooks = new HashSet<>();
+            String line;
+            while ((line = br.readLine()) != null){
+                if(!line.trim().isEmpty()){
+                    readedBooks.add(line);
+                }
+            }
+            br.close();
+            List<DBUtils.BookEntry> books = DBUtils.queryBooks("type=0");
+            for (DBUtils.BookEntry be : books) {
+                String filename = be.getPath();
+                String uniqueKey = "";
+                if(filename.contains("/")){
+                    uniqueKey  = filename.substring(filename.lastIndexOf('/')+1);
+                }
+                else if(filename.contains("\\")){
+                    uniqueKey  = filename.substring(filename.lastIndexOf('\\')+1);
+                }
+                else{
+                    uniqueKey = filename;
+                }
+                if(readedBooks.contains(uniqueKey)){
+                    DBUtils.execSql("update library set type=2 where uuid=?",be.getUUID());
+                }
+            }
+
+            Toast.makeText(this, R.string.success, Toast.LENGTH_SHORT).show();
+        } catch (IOException e) {
+            e.printStackTrace();
+            Toast.makeText(this, "Error: "+e.getLocalizedMessage(), Toast.LENGTH_SHORT).show();
+        }
     }
 }
