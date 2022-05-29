@@ -23,6 +23,7 @@ import androidx.recyclerview.widget.RecyclerView;
 import androidx.appcompat.widget.SearchView;
 import androidx.appcompat.widget.Toolbar;
 import android.util.Base64;
+import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -135,6 +136,7 @@ public class BookshelfActivity extends AppCompatActivity {
                 ViewGroup.LayoutParams lp = navMain.getLayoutParams();
                 lp.width = drwMain.getWidth() * 2 / 3;
                 navMain.setLayoutParams(lp);
+                displayingEinkPage = findViewById(R.id.listBooks);
             }
         },301);
     }
@@ -149,11 +151,13 @@ public class BookshelfActivity extends AppCompatActivity {
         @Override
         public void onDrawerOpened(@NonNull View drawerView) {
             findViewById(R.id.einkDrawerCloser).setVisibility(View.VISIBLE);
+            displayingEinkPage = findViewById(R.id.navMain);
         }
 
         @Override
         public void onDrawerClosed(@NonNull View drawerView) {
             findViewById(R.id.einkDrawerCloser).setVisibility(View.GONE);
+            displayingEinkPage = findViewById(R.id.listBooks);
         }
 
         @Override
@@ -166,8 +170,40 @@ public class BookshelfActivity extends AppCompatActivity {
         setTitle(R.string.all_books);
         isAllBook = true;
         loadMenuRange(DBUtils.queryFoldersNotEmpty().toArray(new DBUtils.BookEntry[0]));
-        loadBooksList(DBUtils.queryBooks("type=0 order by lastopen desc"));
 
+
+        loadBooksList(getRecommandBook(null));
+    }
+
+    private List<DBUtils.BookEntry> getRecommandBook(String query,String... param){
+        String sql = query == null ? "" : query;
+        if(sql.length() > 0){
+            sql = sql+" and ";
+        }
+        List<DBUtils.BookEntry> notFinishedRead = DBUtils.queryBooks(sql+" type=0 order by lastopen desc",param);
+        List<DBUtils.BookEntry> finishedRead = DBUtils.queryBooks(sql+" type = 2 order by lastopen desc",param);
+        List<DBUtils.BookEntry> outList = new ArrayList<>();
+
+        for (int i = 0; i < 6; i++) {
+            if(notFinishedRead.size() > 0) {
+                outList.add(notFinishedRead.remove(0));
+            }
+        }
+        for (int i = 0; i < 3; i++) {
+            if(notFinishedRead.size() > 0){
+                if(finishedRead.size()>0){
+                    if(finishedRead.get(0).getLastOpenTime() >= notFinishedRead.get(0).getLastOpenTime()){
+                        outList.add(finishedRead.remove(0));
+                    }
+                    else{
+                        outList.add(notFinishedRead.remove(0));
+                    }
+                }
+            }
+        }
+        outList.addAll(notFinishedRead);
+        outList.addAll(finishedRead);
+        return outList;
     }
 
     @Override
@@ -212,12 +248,12 @@ public class BookshelfActivity extends AppCompatActivity {
 
     public void doSearching(String text){
         if(isAllBook){
-            List<DBUtils.BookEntry> lsResult = DBUtils.queryBooks("type=0 and display_name like ?  order by lastopen desc","%"+text+"%");
+            List<DBUtils.BookEntry> lsResult = DBUtils.queryBooks("type=0 or type=2 and display_name like ?  order by lastopen desc","%"+text+"%");
             loadBooksList(lsResult);
         }
         else{
 
-            List<DBUtils.BookEntry> lsResult = DBUtils.queryBooks("parent_uuid=? and type=0 and display_name like ?  order by lastopen desc",currentDirectory.getUUID(),"%"+text+"%");
+            List<DBUtils.BookEntry> lsResult = DBUtils.queryBooks("parent_uuid=? and (type=0 or type=2) and display_name like ?  order by lastopen desc",currentDirectory.getUUID(),"%"+text+"%");
             loadBooksList(lsResult);
         }
     }
@@ -346,7 +382,7 @@ public class BookshelfActivity extends AppCompatActivity {
             if(drwMain.isDrawerOpen(GravityCompat.START)){
                 drwMain.closeDrawer(GravityCompat.START);
             }
-            List<DBUtils.BookEntry> lsResult = DBUtils.queryBooks("parent_uuid=? and type=0 order by lastopen desc",be.getUUID());
+            List<DBUtils.BookEntry> lsResult = getRecommandBook("parent_uuid=? ",be.getUUID());
             setTitle(be.getDisplayName());
             loadBooksList(lsResult);
             isAllBook = false;currentDirectory = be;
@@ -361,6 +397,8 @@ public class BookshelfActivity extends AppCompatActivity {
         }
     }
 
+
+
     @Override
     public void onBackPressed() {
         DrawerLayout drwMain = (DrawerLayout) findViewById(R.id.drwMain);
@@ -369,6 +407,25 @@ public class BookshelfActivity extends AppCompatActivity {
         }else{
             super.onBackPressed();
         }
+    }
+    private EinkRecyclerView displayingEinkPage = null;
+
+    @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if(SpUtils.getInstance(this).getEinkMode()){
+            if(displayingEinkPage != null){
+                if(keyCode==KeyEvent.KEYCODE_VOLUME_UP){
+                    displayingEinkPage.pageUp();
+                    return true;
+                }
+
+                if(keyCode==KeyEvent.KEYCODE_VOLUME_DOWN){
+                    displayingEinkPage.pageDown();
+                    return true;
+                }
+            }
+        }
+        return super.onKeyDown(keyCode,event);
     }
 
 
@@ -427,7 +484,14 @@ public class BookshelfActivity extends AppCompatActivity {
             mCoverLoader.load(Uri.parse("epubentry://"+Base64.encodeToString(JsonConvert.toJson(bk).getBytes(),Base64.URL_SAFE))).noFade().into(holder.bookCover);
             holder.crdBook.setClickable(true);
             holder.crdBook.setOnTouchListener(new BookClicker(bk));
-
+            if(bk.getType()==2){
+                holder.badgeFin.setVisibility(View.VISIBLE);
+                holder.bookCover.setAlpha(0.3f);
+            }
+            else{
+                holder.badgeFin.setVisibility(View.INVISIBLE);
+                holder.bookCover.setAlpha(1f);
+            }
         }
         @Override
         public int getItemCount() {
@@ -439,12 +503,14 @@ public class BookshelfActivity extends AppCompatActivity {
             ImageView bookCover;
             TextView bookName;
             CardView crdBook;
+            TextView badgeFin;
             public BookAdapterViewHolder(View itemView) {
                 super(itemView);
                 rootView = (LinearLayout) itemView;
                 bookCover = rootView.findViewById(R.id.imgCover);
                 bookName = rootView.findViewById(R.id.txtTitle);
                 crdBook = rootView.findViewById(R.id.crdBook);
+                badgeFin = rootView.findViewById(R.id.badgeFin);
             }
         }
          class BookClicker implements View.OnTouchListener{
