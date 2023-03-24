@@ -4,6 +4,8 @@ import android.app.AlertDialog;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.res.ColorStateList;
+import android.graphics.Color;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.StrictMode;
@@ -23,6 +25,7 @@ import androidx.recyclerview.widget.RecyclerView;
 import androidx.appcompat.widget.SearchView;
 import androidx.appcompat.widget.Toolbar;
 import android.util.Base64;
+import android.util.Log;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
 import android.view.Menu;
@@ -38,11 +41,11 @@ import android.widget.Toast;
 import com.google.gson.Gson;
 import com.squareup.picasso.Downloader;
 import com.squareup.picasso.Picasso;
-import com.zyfdroid.epub.server.ServerActivity;
 import com.zyfdroid.epub.utils.BookScanner;
 import com.zyfdroid.epub.utils.DBUtils;
 import com.zyfdroid.epub.utils.EpubUtils;
 import com.zyfdroid.epub.utils.SpUtils;
+import com.zyfdroid.epub.utils.TextUtils;
 import com.zyfdroid.epub.utils.ViewUtils;
 import com.zyfdroid.epub.views.EinkRecyclerView;
 
@@ -98,7 +101,15 @@ public class BookshelfActivity extends AppCompatActivity {
         hWnd.postDelayed(new Runnable() {
             @Override
             public void run() {
-                loadData();
+
+                if(SpUtils.getInstance(BookshelfActivity.this).isDesktopEmpty()){
+
+                    loadData();
+                }
+                else{
+                    loadMenuRange(DBUtils.queryFoldersNotEmpty().toArray(new DBUtils.BookEntry[0]));
+                    loadDesktop(null);
+                }
             }
         },300);
         hWnd.postDelayed(new Runnable() {
@@ -137,6 +148,7 @@ public class BookshelfActivity extends AppCompatActivity {
                 lp.width = drwMain.getWidth() * 2 / 3;
                 navMain.setLayoutParams(lp);
                 displayingEinkPage = findViewById(R.id.listBooks);
+                drwMain.closeDrawer(GravityCompat.START);
             }
         },301);
     }
@@ -171,7 +183,6 @@ public class BookshelfActivity extends AppCompatActivity {
         isAllBook = true;
         loadMenuRange(DBUtils.queryFoldersNotEmpty().toArray(new DBUtils.BookEntry[0]));
 
-
         loadBooksList(getRecommandBook(null));
     }
 
@@ -203,8 +214,12 @@ public class BookshelfActivity extends AppCompatActivity {
         }
         outList.addAll(notFinishedRead);
         outList.addAll(finishedRead);
+
         return outList;
     }
+
+    private MenuItem _mnuSearchButton;
+    private MenuItem _mnuAllBookButton;
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
@@ -230,7 +245,14 @@ public class BookshelfActivity extends AppCompatActivity {
                 }
             });
 
-            menu.add(R.string.bookshelf_search).setIcon(R.drawable.ic_menu_searchinlibrary).setShowAsActionFlags(MenuItem.SHOW_AS_ACTION_ALWAYS).setActionView(actionView);
+            _mnuSearchButton = menu.add(R.string.bookshelf_search).setIcon(R.drawable.ic_menu_searchinlibrary).setShowAsActionFlags(MenuItem.SHOW_AS_ACTION_ALWAYS).setActionView(actionView);
+            _mnuAllBookButton = menu.add(R.string.all_books).setVisible(false).setIcon(R.drawable.ic_menu_bookmark_light).setShowAsActionFlags(MenuItem.SHOW_AS_ACTION_ALWAYS).setOnMenuItemClickListener(new MenuItem.OnMenuItemClickListener() {
+                @Override
+                public boolean onMenuItemClick(MenuItem item) {
+                    loadAll(null);
+                    return true;
+                }
+            });
             menu.add(R.string.bookshelf_scan_for_books).setIcon(R.drawable.ic_menu_rescan).setShowAsActionFlags(MenuItem.SHOW_AS_ACTION_NEVER).setOnMenuItemClickListener(new MenuItem.OnMenuItemClickListener() {
                 @Override
                 public boolean onMenuItemClick(MenuItem item) {
@@ -248,7 +270,7 @@ public class BookshelfActivity extends AppCompatActivity {
 
     public void doSearching(String text){
         if(isAllBook){
-            List<DBUtils.BookEntry> lsResult = DBUtils.queryBooks("type=0 or type=2 and display_name like ?  order by lastopen desc","%"+text+"%");
+            List<DBUtils.BookEntry> lsResult = DBUtils.queryBooks("(type=0 or type=2) and display_name like ?  order by lastopen desc","%"+text+"%");
             loadBooksList(lsResult);
         }
         else{
@@ -298,7 +320,12 @@ public class BookshelfActivity extends AppCompatActivity {
         GridLayoutManager glm = new GridLayoutManager(this,3, GridLayoutManager.HORIZONTAL,false);
         rv.setLayoutManager(glm);
         rv.setAdapter(ba);
+        findViewById(R.id.txtDesktopHint).setVisibility(View.GONE);
         findViewById(R.id.txtScanHint).setVisibility(books.size()>0 ? View.GONE : View.VISIBLE);
+        if(_mnuAllBookButton == null){return;}
+        _mnuAllBookButton.setVisible(false);
+        _mnuSearchButton.setVisible(true);
+        isDesktop = false;
     }
 
     List<MenuItem> folderMenuItems = new ArrayList<>();
@@ -319,6 +346,7 @@ public class BookshelfActivity extends AppCompatActivity {
         folderAdapter.data.clear();
         folderAdapter.data.add(new FolderViewData(0,null,0));
         folderAdapter.data.add(new FolderViewData(1,getText(R.string.all).toString(),0));
+        folderAdapter.data.add(new FolderViewData(2,getText(R.string.desktop).toString(),R.drawable.ic_menu_folder){{clicker = BookshelfActivity.this::loadDesktop;}});
         folderAdapter.data.add(new FolderViewData(2,getText(R.string.all_books).toString(),R.drawable.ic_menu_folder){{clicker = BookshelfActivity.this::loadAll;}});
         folderAdapter.data.add(new FolderViewData(1,getText(R.string.folders).toString(),0));
         for (int i = 0; i < strs.length; i++) {
@@ -330,18 +358,18 @@ public class BookshelfActivity extends AppCompatActivity {
         folderAdapter.data.add(new FolderViewData(1,getString(R.string.complete_books),0));
         folderAdapter.data.add(new FolderViewData(2,getText(R.string.complete_books).toString(),R.drawable.ic_menu_folder){{clicker = BookshelfActivity.this::loadCompleteBooks;}});
         folderAdapter.data.add(new FolderViewData(1,getText(R.string.preference).toString(),0));
-        folderAdapter.data.add(new FolderViewData(2,getText(R.string.server).toString(),R.drawable.ic_list_go){{
-            clicker = new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    DrawerLayout drwMain = (DrawerLayout) findViewById(R.id.drwMain);
-                    if(drwMain.isDrawerOpen(GravityCompat.START)){
-                        drwMain.closeDrawer(GravityCompat.START);
-                    }
-                    startActivity(new Intent(BookshelfActivity.this,ServerActivity.class));
-                }
-            };
-        }});
+//        folderAdapter.data.add(new FolderViewData(2,getText(R.string.server).toString(),R.drawable.ic_list_go){{
+//            clicker = new View.OnClickListener() {
+//                @Override
+//                public void onClick(View v) {
+//                    DrawerLayout drwMain = (DrawerLayout) findViewById(R.id.drwMain);
+//                    if(drwMain.isDrawerOpen(GravityCompat.START)){
+//                        drwMain.closeDrawer(GravityCompat.START);
+//                    }
+//                    startActivity(new Intent(BookshelfActivity.this,ServerActivity.class));
+//                }
+//            };
+//        }});
         folderAdapter.data.add(new FolderViewData(2,getText(R.string.settings).toString(),R.drawable.ic_menu_setting){{
             clicker = new View.OnClickListener() {
                 @Override
@@ -396,7 +424,51 @@ public class BookshelfActivity extends AppCompatActivity {
             drwMain.closeDrawer(GravityCompat.START);
         }
     }
+    boolean isDesktop = false;
+    void loadDesktop(View v){
+        setTitle(R.string.desktop);
+        isAllBook = false;
 
+        List<DBUtils.BookEntry> desktopBooks = SpUtils.getInstance(this).getDesktopBooks();
+        boolean hasBook = false;
+        for (int i = 0; i < desktopBooks.size(); i++) {
+            if(desktopBooks.get(i) != null){
+                hasBook = true;
+            }
+        }
+
+
+        loadBooksList(desktopBooks);
+        findViewById(R.id.txtDesktopHint).setVisibility(hasBook ? View.GONE : View.VISIBLE);
+        _mnuSearchButton.setVisible(false);
+        _mnuAllBookButton.setVisible(true);
+        DrawerLayout drwMain = (DrawerLayout) findViewById(R.id.drwMain);
+        if(drwMain.isDrawerOpen(GravityCompat.START)){
+            drwMain.closeDrawer(GravityCompat.START);
+        }
+
+        isDesktop = true;
+    }
+
+    boolean skipInitialResume = true;
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+
+        if(skipInitialResume){
+            skipInitialResume = false;
+            return;
+        }
+
+        if(isAllBook){
+            loadData();
+        }
+        if(isDesktop){
+            loadDesktop(null);
+        }
+        Log.e("Activity:::","OnResume::::::::::::::::::::::::::::");
+    }
 
 
     @Override
@@ -480,6 +552,11 @@ public class BookshelfActivity extends AppCompatActivity {
         @Override
         public void onBindViewHolder(BookAdapterViewHolder holder, int position) {
             DBUtils.BookEntry bk = books.get(position);
+            holder.crdBook.setVisibility(View.VISIBLE);
+            if(bk == null) {
+                holder.crdBook.setVisibility(View.INVISIBLE);
+                return;
+            }
             holder.bookName.setText(bk.getDisplayName());
             mCoverLoader.load(Uri.parse("epubentry://"+Base64.encodeToString(JsonConvert.toJson(bk).getBytes(),Base64.URL_SAFE))).noFade().into(holder.bookCover);
             holder.crdBook.setClickable(true);
@@ -522,6 +599,7 @@ public class BookshelfActivity extends AppCompatActivity {
 
             @Override
             public boolean onTouch(View v, MotionEvent event) {
+
                 if(event.getAction()==MotionEvent.ACTION_UP){
                     onBookClick(entry);
                     return true;

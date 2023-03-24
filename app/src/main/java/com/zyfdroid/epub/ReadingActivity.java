@@ -31,6 +31,8 @@ import android.view.MenuItem;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
+import android.view.WindowManager;
 import android.webkit.ConsoleMessage;
 import android.webkit.MimeTypeMap;
 import android.webkit.WebChromeClient;
@@ -48,8 +50,10 @@ import android.widget.Toast;
 import com.google.gson.Gson;
 import com.zyfdroid.epub.utils.DBUtils;
 import com.zyfdroid.epub.utils.EpubUtils;
+import com.zyfdroid.epub.utils.ScreenUtils;
 import com.zyfdroid.epub.utils.SpUtils;
 import com.zyfdroid.epub.utils.TextUtils;
+import com.zyfdroid.epub.utils.ViewUtils;
 import com.zyfdroid.epub.views.EinkRecyclerView;
 
 import java.io.ByteArrayInputStream;
@@ -121,14 +125,29 @@ public class ReadingActivity extends AppCompatActivity {
 
         return super.onMenuOpened(featureId, menu);
     }
+
+    float readActionBarSize = 0;
+    View readActionBar = null;
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_reading);
+        ScreenUtils.adaptScreens(this);
+        if(!SpUtils.getInstance(this).getFullscreen()){
+
+            findViewById(R.id.readingContainer).setPadding(0,ViewUtils.dip2px(this,9),0,ViewUtils.dip2px(this,16));
+        }
         tocHashMap.clear();
-        ;
+        findViewById(R.id.tblStatusBar).setVisibility(SpUtils.getInstance(this).getShowStatusBar() ? View.VISIBLE : View.GONE);
+
+
+        readActionBarSize = getResources().getDimensionPixelSize(R.dimen.readActionbarHeight);
+        readActionBar = findViewById(R.id.readingTitleBar);
+        readActionBar.setTranslationY(- readActionBarSize);
         tocList.clear();
         setSupportActionBar((Toolbar) findViewById(R.id.titMain));
+
+        readActionBar.setElevation(0);
         final DrawerLayout drwMain = (DrawerLayout) findViewById(R.id.drwMain);
         ActionBarDrawerToggle drwButton = new ActionBarDrawerToggle(this,drwMain,(Toolbar) findViewById(R.id.titMain),R.string.app_name,R.string.app_name);
         if(SpUtils.getInstance(this).getEinkMode()) {
@@ -149,6 +168,9 @@ public class ReadingActivity extends AppCompatActivity {
         drwMain.addDrawerListener(drwButton);
         drwButton.syncState();
         readingBook = JsonConvert.fromJson(getIntent().getStringExtra("book"), DBUtils.BookEntry.class);
+
+
+
         bookRootPath = new File(EpubUtils.cacheBookPath, readingBook.getUUID()).getAbsolutePath();
         drawerTab = findViewById(R.id.tabMain);
         bookView = findViewById(R.id.webEpub);
@@ -202,6 +224,7 @@ public class ReadingActivity extends AppCompatActivity {
             hWnd.postDelayed(new Runnable() {
                 @Override
                 public void run() {
+                    readActionBar.setElevation(0);
                     if(SpUtils.getInstance(ReadingActivity.this).getEinkMode()) {
                         EinkRecyclerView rv = findViewById(R.id.listChapters);
                         EinkRecyclerView rv2 = findViewById(R.id.listBookmarks);
@@ -235,6 +258,9 @@ public class ReadingActivity extends AppCompatActivity {
                             }
                         });
                     }
+                    else{
+                        drwMain.addDrawerListener(nonEinkGestureSwitcher);
+                    }
                     View drvLeft = findViewById(R.id.drwLeft);
                     ViewGroup.LayoutParams lp = drvLeft.getLayoutParams();
                     lp.width = drwMain.getWidth() *2 / 3;
@@ -242,8 +268,35 @@ public class ReadingActivity extends AppCompatActivity {
 
                 }
             }, 300);
-
+            if(SpUtils.getInstance(this).shouldShowFullscreenHint()){
+                Toast.makeText(this, R.string.fullscreen_hint,Toast.LENGTH_LONG).show();
+            }
     }
+
+    DrawerLayout.DrawerListener nonEinkGestureSwitcher = new DrawerLayout.DrawerListener() {
+        @Override
+        public void onDrawerSlide(@NonNull View drawerView, float slideOffset) {
+            readActionBar.setTranslationY(-(1-slideOffset) * readActionBarSize);
+            readActionBar.setElevation(15 * slideOffset);
+        }
+
+        @Override
+        public void onDrawerOpened(@NonNull View drawerView) {
+            readActionBar.setTranslationY(0);
+            readActionBar.setElevation(15);
+        }
+
+        @Override
+        public void onDrawerClosed(@NonNull View drawerView) {
+            readActionBar.setTranslationY( - readActionBarSize);
+            readActionBar.setElevation(0);
+        }
+
+        @Override
+        public void onDrawerStateChanged(int newState) {
+
+        }
+    };
 
     DrawerLayout.DrawerListener einkGestureSwitcher = new DrawerLayout.DrawerListener() {
         @Override
@@ -260,12 +313,14 @@ public class ReadingActivity extends AppCompatActivity {
             if(findViewById(R.id.listBookmarks).getVisibility() == View.VISIBLE){
                 displayingEinkPage = findViewById(R.id.listBookmarks);
             }
+            readActionBar.setTranslationY(0);
         }
 
         @Override
         public void onDrawerClosed(@NonNull View drawerView) {
             findViewById(R.id.einkDrawerCloser).setVisibility(View.GONE);
             displayingEinkPage = null;
+            readActionBar.setTranslationY( - readActionBarSize);
         }
 
         @Override
@@ -287,11 +342,22 @@ public class ReadingActivity extends AppCompatActivity {
 
     private EinkRecyclerView displayingEinkPage = null;
 
+
+    private boolean keyAlreadyDown = false;
+
+    @Override
+    public boolean onKeyUp(int keyCode, KeyEvent event) {
+        keyAlreadyDown = false;
+        return super.onKeyUp(keyCode, event);
+    }
+
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
 
-
-
+        if(keyAlreadyDown){
+            return true;
+        }
+        keyAlreadyDown = true;
         if(isDrawerOpen()){
             if(SpUtils.getInstance(this).getEinkMode()){
                 if(displayingEinkPage != null){
@@ -384,6 +450,38 @@ public class ReadingActivity extends AppCompatActivity {
                     DBUtils.execSql("update library set type=0 where uuid=?", readingBook.getUUID());
                     snack(getString(R.string.success));
                 }
+                break;
+
+            case R.id.mnuAddToDesktop:
+            {
+                String[] listEntries = new String[SpUtils.DESKTOP_SLOT_COUNT];
+                List<DBUtils.BookEntry> desktopBooks = SpUtils.getInstance(this).getDesktopBooks();
+                for (int i = 0; i < listEntries.length; i++) {
+                    DBUtils.BookEntry bookEntry = desktopBooks.get(i);
+                    if(bookEntry == null){
+                        listEntries[i] = (i+1)+" - <空>";
+                    }
+                    else{
+                        listEntries[i] = (i+1)+" - "+TextUtils.stripText(bookEntry.getDisplayName(),32);
+                    }
+                }
+
+                new android.app.AlertDialog.Builder(this).setTitle(R.string.menu_add_to_desktop).setItems(listEntries, new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        SpUtils.getInstance(ReadingActivity.this).removeFromDesktop(readingBook.getUUID());
+                        SpUtils.getInstance(ReadingActivity.this).setDesktopSlot(which, readingBook.getUUID());
+                        Toast.makeText(ReadingActivity.this,getString(R.string.tm_added_to_desktop), Toast.LENGTH_SHORT).show();
+                    }
+                }).create().show();
+
+            }
+
+                break;
+
+            case R.id.mnuRemoveFromDesktop:
+                SpUtils.getInstance(this).removeFromDesktop(readingBook.getUUID());
+                Toast.makeText(this,getString(R.string.tm_removed_from_desktop), Toast.LENGTH_SHORT).show();
                 break;
             default:
                 Log.w("Unknown menu clicked: ","id="+item.getItemId());
@@ -735,9 +833,21 @@ public class ReadingActivity extends AppCompatActivity {
                 DBUtils.autoSave(readingBook.getUUID(), arg, currentChapter + "\n" + currentPage);
             }
         });
+
+        htmlCallbacks.put("CENTER_CLICKED", new Action<String>() {
+            long lastTime = -1;
+            @Override
+            public void run(String arg) {
+                if(System.currentTimeMillis() - lastTime < 800){
+                    ((DrawerLayout)findViewById(R.id.drwMain)).openDrawer(GravityCompat.START);
+                }
+                lastTime = System.currentTimeMillis();
+            }
+        });
     }
     void displayPageInfo() {
         getSupportActionBar().setSubtitle("[" + currentPage + "] " + currentChapter);
+        ((TextView)findViewById(R.id.txtChapterInfo2)).setText(currentPage + " " + currentChapter);
     }
 
     public void evaluteJavascriptFunction(String functionName, Object... arguments) {

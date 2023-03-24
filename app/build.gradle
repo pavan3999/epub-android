@@ -19,8 +19,8 @@ android {
         minSdkVersion 21
         //noinspection ExpiredTargetSdkVersion
         targetSdkVersion 28
-        versionCode 1050001
-        versionName "1.5.0.1"
+        versionCode 1070000
+        versionName "1.7.0.0"
         signingConfig signingConfigs.debug
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
     }
