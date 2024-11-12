@@ -9,6 +9,7 @@ import android.graphics.Color;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.StrictMode;
+import android.view.*;
 import com.google.android.material.navigation.NavigationView;
 
 import androidx.annotation.NonNull;
@@ -26,13 +27,6 @@ import androidx.appcompat.widget.SearchView;
 import androidx.appcompat.widget.Toolbar;
 import android.util.Base64;
 import android.util.Log;
-import android.view.KeyEvent;
-import android.view.LayoutInflater;
-import android.view.Menu;
-import android.view.MenuItem;
-import android.view.MotionEvent;
-import android.view.View;
-import android.view.ViewGroup;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -145,7 +139,7 @@ public class BookshelfActivity extends AppCompatActivity {
                     });
                 }
                 ViewGroup.LayoutParams lp = navMain.getLayoutParams();
-                lp.width = drwMain.getWidth() * 2 / 3;
+                lp.width = (int) (drwMain.getWidth() * (0.01d * getResources().getInteger(R.integer.drawerWidthPercent)));
                 navMain.setLayoutParams(lp);
                 displayingEinkPage = findViewById(R.id.listBooks);
                 drwMain.closeDrawer(GravityCompat.START);
@@ -317,7 +311,7 @@ public class BookshelfActivity extends AppCompatActivity {
     public void loadBooksList(List<DBUtils.BookEntry> books){
         RecyclerView rv = (RecyclerView) findViewById(R.id.listBooks);
         BookAdapter ba = new BookAdapter(this,rv,books);
-        GridLayoutManager glm = new GridLayoutManager(this,3, GridLayoutManager.HORIZONTAL,false);
+        GridLayoutManager glm = new GridLayoutManager(this,getResources().getInteger(R.integer.bookshelfRow), GridLayoutManager.HORIZONTAL,false);
         rv.setLayoutManager(glm);
         rv.setAdapter(ba);
         findViewById(R.id.txtDesktopHint).setVisibility(View.GONE);
@@ -461,6 +455,11 @@ public class BookshelfActivity extends AppCompatActivity {
             return;
         }
 
+        if(SpUtils.getInstance(this).getEinkMode()){
+            // Skip loading content for faster load
+            return;
+        }
+
         if(isAllBook){
             loadData();
         }
@@ -510,11 +509,15 @@ public class BookshelfActivity extends AppCompatActivity {
             }
         },2000);
         if(SpUtils.getInstance(this).shouldOpenWithExternalReader()){
-            Intent i = new Intent(Intent.ACTION_VIEW);
-            i.setData(Uri.fromFile(new File(be.getPath())));
+
             try{
-                StrictMode.setVmPolicy(new StrictMode.VmPolicy.Builder().detectFileUriExposure().build());
-                startActivity(i);
+                Intent intent = new Intent(Intent.ACTION_VIEW);
+                Uri contentUri = BookFileProvider
+                        .getUriForFile(this,getPackageName() , new File(be.getPath()));
+                intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION|Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                // intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                intent.setDataAndType(contentUri, "application/epub+zip");
+                startActivity(intent);
             }catch (Exception ex){
                 ex.printStackTrace();
                 Toast.makeText(this, R.string.open_no_external, Toast.LENGTH_SHORT).show();
@@ -544,7 +547,7 @@ public class BookshelfActivity extends AppCompatActivity {
         @Override
         public BookAdapterViewHolder onCreateViewHolder(ViewGroup parent, int viewType) {
             BookAdapterViewHolder bavh = new BookAdapterViewHolder(LayoutInflater.from(getContext()).inflate(R.layout.adapter_book_entry,parent,false));
-            RecyclerView.LayoutParams lp = new RecyclerView.LayoutParams(root.getWidth()/3,root.getHeight()/3);
+            RecyclerView.LayoutParams lp = new RecyclerView.LayoutParams(root.getWidth()/getResources().getInteger(R.integer.bookshelfCol),root.getHeight()/getResources().getInteger(R.integer.bookshelfRow));
             bavh.rootView.setLayoutParams(lp);
             return bavh;
         }
@@ -560,7 +563,7 @@ public class BookshelfActivity extends AppCompatActivity {
             holder.bookName.setText(bk.getDisplayName());
             mCoverLoader.load(Uri.parse("epubentry://"+Base64.encodeToString(JsonConvert.toJson(bk).getBytes(),Base64.URL_SAFE))).noFade().into(holder.bookCover);
             holder.crdBook.setClickable(true);
-            holder.crdBook.setOnTouchListener(new BookClicker(bk));
+            holder.crdBook.setOnClickListener(new BookClicker(bk));
             if(bk.getType()==2){
                 holder.badgeFin.setVisibility(View.VISIBLE);
                 holder.bookCover.setAlpha(0.3f);
@@ -590,22 +593,18 @@ public class BookshelfActivity extends AppCompatActivity {
                 badgeFin = rootView.findViewById(R.id.badgeFin);
             }
         }
-         class BookClicker implements View.OnTouchListener{
+         class BookClicker implements View.OnClickListener{
             DBUtils.BookEntry entry;
             public BookClicker(DBUtils.BookEntry entry) {
                 this.entry = entry;
             }
 
+             @Override
+             public void onClick(View view) {
+                 onBookClick(entry);
+             }
 
-            @Override
-            public boolean onTouch(View v, MotionEvent event) {
 
-                if(event.getAction()==MotionEvent.ACTION_UP){
-                    onBookClick(entry);
-                    return true;
-                }
-                return false;
-            }
         }
     }
 
@@ -620,6 +619,42 @@ public class BookshelfActivity extends AppCompatActivity {
             throw new IOException();
         }
     }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+
+        if(event.getAction() == KeyEvent.ACTION_UP){
+            if(processKeyDown(event.getKeyCode(),event)){
+                return true;
+            }
+        }
+
+        return super.dispatchKeyEvent(event);
+    }
+
+    public boolean processKeyDown(int keyCode, KeyEvent event) {
+        Log.d("onKeyUp","KeyCode="+keyCode);
+
+        if(keyCode == KeyEvent.KEYCODE_BUTTON_SELECT){
+            if(!drwMain.isDrawerOpen(GravityCompat.START)){
+                drwMain.openDrawer(GravityCompat.START);
+            }
+            else{
+                drwMain.closeDrawer(GravityCompat.START);
+            }
+
+            return true;
+        }
+        if(keyCode == KeyEvent.KEYCODE_BUTTON_Y){
+            openOptionsMenu();
+
+            return true;
+        }
+
+        return false;
+    }
+
+
 
 
     class FolderDrawerAdapter extends RecyclerView.Adapter<FolderDrawerAdapter.FolderDrawerViewHolder>{
